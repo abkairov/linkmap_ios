@@ -7,7 +7,7 @@ require "thor"
 
 module LinkmapIos
   class CLI < Thor
-    desc "parse [LINKMAP FILE PATH]", "Parse link map file and output. Will output Ruby Hash by default"
+    desc "parse [LINKMAP FILE PATH]", "Parse link map file and output. Will output Ruby Hash by default; -g is a string with several comma separated regexs."
     # method_option :path, :type => :string, :required => true, :aliases => "-i"
     method_option :format, :type => :string, :enum => %w{hash json report csv}, :aliases => "-f"
     method_option :output_path, :type => :string, :aliases => "-o"
