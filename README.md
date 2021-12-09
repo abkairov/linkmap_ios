@@ -23,11 +23,17 @@ linkmap_ios parse [LINKMAP FILE PATH]
 
 Options:
   -f, [--format=FORMAT]            
-                                   # Possible values: hash, json, report
+                                   # Possible values: hash, json, report, csv
   -o, [--output-path=OUTPUT_PATH]  
-
+  -g, [--filter-str=FILTER_STR]    # Several regex, comma separated
+  
 Parse link map file and output. Will output Ruby Hash by default
 ```
+### Example
+```
+./linkmap_ios parse myApp-LinkMap.txt -f report -g 'protobuf,libopus,quic,x/rt/webrtc,webrtc' -o ~/Map.report.txt
+```
+
 #### Note
 Byte is the default unit in all kind of output.
 
