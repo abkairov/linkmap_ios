@@ -11,14 +11,20 @@ module LinkmapIos
     # method_option :path, :type => :string, :required => true, :aliases => "-i"
     method_option :format, :type => :string, :enum => %w{hash json report csv}, :aliases => "-f"
     method_option :output_path, :type => :string, :aliases => "-o"
+    method_option :filter_str, :type => :string, :aliases => "-g"
     def parse(path)
       puts "Start parsing. Link map file size is #{File.size(path)}"
       start_time = Time.now
 
       format = (options.format or 'hash')
+      filter_str = (options.filter_str or nil)
+
+      puts "Format = #{format}"
+      puts "Filter = #{filter_str}"
+      puts "OutFile = #{options.output_path}"
 
       if format.eql? 'csv'
-        output = LinkmapIos::LinkmapParser.new(path).hash
+        output = LinkmapIos::LinkmapParser.new(path, filter_str).hash
         puts "Parse file done. Time used: #{Time.now - start_time}s"
 
         CSV.open(options.output_path, "wb") do |csv|
@@ -31,7 +37,7 @@ module LinkmapIos
         return
       end
 
-      output = LinkmapIos::LinkmapParser.new(path).send(format)
+      output = LinkmapIos::LinkmapParser.new(path, filter_str).send(format)
 
       puts "Parse file done. Time used: #{Time.now - start_time}s"
       start_time = Time.now

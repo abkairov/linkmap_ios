@@ -3,17 +3,30 @@ require "filesize"
 require "json"
 
 module LinkmapIos
-  Library = Struct.new(:name, :size, :objects, :dead_symbol_size, :pod)
+  Library = Struct.new(:name, :group, :size, :objects, :dead_symbol_size, :filtered_symbol_size, :pod)
 
   class LinkmapParser
     attr_reader :id_map
     attr_reader :library_map
-    
-    def initialize(file_path)
+
+    def initialize(file_path, filter_str)
       @file_path = file_path
+      @filter_re = nil
+      if !filter_str.nil?
+        a = filter_str.split(",")
+        @filter_re = a.map { |s| {:re => (Regexp.new s), :str => s, :size => 0 } }
+      end
       @id_map = {}
       @library_map = {}
       @section_map = {}
+      @groups_map = {}
+      if !@filter_re.nil?
+        for f in @filter_re
+          @groups_map[f[:str]] = 0
+          puts "Grouping by: #{f[:str]} = #{f[:re].to_s}"
+        end
+        # @groups_map.each { |k,v| puts "Groups Map: #{k} = #{v.to_s}" }
+      end
     end
 
     def hash
@@ -23,13 +36,16 @@ module LinkmapIos
       parse
 
       total_size = @library_map.values.map(&:size).inject(:+)
+      @groups_map.each { |k,v| puts "Groups Map: #{k} = #{v.to_s}" }
+      grouped_sizes = @groups_map.map { |k, s| {:group => k, :size => s }}
+      #grouped_sizes = @library_map.values.map(&:filtered_symbol_size).inject(:+)
       detail = @library_map.values.map { |lib| {:library => lib.name, :pod => lib.pod, :size => lib.size, :dead_symbol_size => lib.dead_symbol_size, :objects => lib.objects.map { |o| @id_map[o][:object] }}}
       total_dead_size = @library_map.values.map(&:dead_symbol_size).inject(:+)
 
       # puts total_size
       # puts detail
 
-      @result_hash = {:total => total_size, :detail => detail, :total_dead => total_dead_size}
+      @result_hash = {:total => total_size, :detail => detail, :total_dead => total_dead_size, :total_grouped => grouped_sizes}
       @result_hash
     end
 
@@ -44,6 +60,13 @@ module LinkmapIos
       report << "#{Filesize.from(result[:total].to_s + 'B').pretty}\n"
       report << "# Dead Size\n"
       report << "#{Filesize.from(result[:total_dead].to_s + 'B').pretty}\n"
+      if !@filter_re.nil?
+        report << "# Filtered/Grouped Sizes\n"
+        for s in result[:total_grouped]
+          report << "Group " << s[:group] << ": " << "#{Filesize.from(s[:size].to_s + 'B').pretty}\n"
+        end
+      end
+
       report << "\n# Library detail\n"
       result[:detail].sort_by { |h| h[:size] }.reverse.each do |lib|
         report << "#{lib[:library]}   #{Filesize.from(lib[:size].to_s + 'B').pretty}\n"
@@ -96,14 +119,31 @@ module LinkmapIos
     end
 
     def parse_object_files(text)
+      groupStr = nil
+      isFiltered = false
+      if !@filter_re.nil?
+        isFiltered = true
+        for f in @filter_re
+          if text =~ f[:re]
+            groupStr = f[:str]
+            isFiltered = false
+            break
+          end
+        end
+      end
+
       if text =~ /\[(.*)\].*\/(.*)\((.*)\)/
+        idStr = $1
+        libStr = isFiltered ? 'FilteredLib' : $2
+        groupStr = isFiltered ? 'All_Other_Libs' : groupStr
+        objStr = $3
         # Sample:
         # [  6] SomePath/Release-iphoneos/ReactiveCocoa/libReactiveCocoa.a(MKAnnotationView+RACSignalSupport.o)
         # So $1 is id. $2 is library
-        id = $1.to_i
-        @id_map[id] = {:library => $2, :object => $3}
+        id = idStr.to_i
+        @id_map[id] = {:library => libStr, :object => objStr, :filtered => isFiltered, :group => groupStr}
 
-        library = (@library_map[$2] or Library.new($2, 0, [], 0))
+        library = (@library_map[libStr] or Library.new(libStr, groupStr, 0, [], 0, 0))
         library.objects << id
         if text.include?('/Pods/')
           # Sample:
@@ -115,7 +155,7 @@ module LinkmapIos
         else
           library.pod = ''
         end
-        @library_map[$2] = library
+        @library_map[libStr] = library
       elsif text =~ /\[(.*)\].*\/(.*)/
         # Sample:
         # System
@@ -124,28 +164,30 @@ module LinkmapIos
         # [  3] /SomePath/Release-iphoneos/CrashDemo.build/Objects-normal/arm64/AppDelegate.o
         # Dynamic Framework
         # [9742] /SomePath/Pods/AFNetworking/Classes/AFNetworking.framework/AFNetworking
+        libStr = isFiltered ? 'FilteredFwk' : $2
+        groupStr = isFiltered ? 'All_Other_Fwk' : groupStr
         id = $1.to_i
-        if text.include?('.framework') and not $2.include?('.')
-          lib = $2
+        if text.include?('.framework') and not libStr.include?('.')
+          lib = libStr
         else
           if text.end_with?('.a')
-            lib = $2
+            lib = libStr
           else
-            lib = $2.end_with?('.tbd') ? 'System' : 'Main'
+            lib = libStr.end_with?('.tbd') ? 'System' : 'Main'
           end
         end
-        @id_map[id] = {:library => lib, :object => $2}
+        @id_map[id] = {:library => lib, :object => libStr, :filtered => isFiltered, :group => groupStr}
 
-        library = (@library_map[lib] or Library.new(lib, 0, [], 0, ''))
+        library = (@library_map[lib] or Library.new(lib, groupStr, 0, [], 0, 0, ''))
         library.objects << id
         @library_map[lib] = library
-        
       elsif text =~ /\[(.*)\]\s*([\w\s]+)/
         # Sample:
         # [  0] linker synthesized
         # [  1] dtrace
+        groupStr = isFiltered ? 'All_Main' : groupStr
         id = $1.to_i
-        @id_map[id] = {library: 'Main', object: $2}
+        @id_map[id] = {library: 'Main', object: $2, :filtered => isFiltered, :group => groupStr}
       end
     end
 
@@ -172,17 +214,29 @@ module LinkmapIos
     def parse_symbols(text)
       # Sample
       # 0x1000055C8	0x0000003C	[  4] -[FirstViewController viewWillAppear:]
-      if text =~ /^0x(.+?)\s+0x(.+?)\s+\[(.+?)\]/
+      if text =~ /^0[xX](.+?)\s+0[xX](.+?)\s+\[(.+?)\]/
         symbol_address = $1.to_i(16)
         symbol_size = $2.to_i(16)
         symbol_file_id = $3.to_i
         id_info = @id_map[symbol_file_id]
+        #symbol_name = $'
+        #if text.include? 'PacedSender'
+        #  puts "Found this line:\n#{text.inspect}"
+        #end
         if id_info
-          id_info[:size] = (id_info[:size] or 0) + symbol_size
-          @library_map[id_info[:library]].size += symbol_size
-          seg_sec_name = @section_map.detect {|seg_sec_name, value| (value[:start_address]...value[:end_address]).include? symbol_address}[0]
-          @section_map[seg_sec_name.to_sym][:symbol_size] += symbol_size
-          @section_map[seg_sec_name.to_sym][:residual_size] -= symbol_size
+          if @library_map[id_info[:library]]
+            id_info[:size] = (id_info[:size] or 0) + symbol_size
+            @library_map[id_info[:library]].size += symbol_size
+            if @library_map[id_info[:library]].group
+              @groups_map[id_info[:group]] = (@groups_map[id_info[:group]] or 0) + symbol_size
+            end
+            # if id_info[:filtered]
+            #   @library_map[id_info[:library]].filtered_symbol_size += symbol_size
+            # end
+            seg_sec_name = @section_map.detect {|seg_sec_name, value| (value[:start_address]...value[:end_address]).include? symbol_address}[0]
+            @section_map[seg_sec_name.to_sym][:symbol_size] += symbol_size
+            @section_map[seg_sec_name.to_sym][:residual_size] -= symbol_size
+          end
         else
           puts "#{text.inspect} can not found object file"
         end
@@ -193,7 +247,7 @@ module LinkmapIos
 
     def parse_dead(text)
       # <<dead>>  0x00000008  [  3] literal string: v16@0:8
-      if text =~ /^<<dead>>\s+0x(.+?)\s+\[(.+?)\]\w*/
+      if text =~ /^<<dead>>\s+0[xX](.+?)\s+\[(.+?)\]\w*/
         id_info = @id_map[$2.to_i]
         if id_info
           id_info[:dead_symbol_size] = (id_info[:dead_symbol_size] or 0) + $1.to_i(16)
