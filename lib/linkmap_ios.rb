@@ -71,9 +71,49 @@ module LinkmapIos
       result[:detail].sort_by { |h| h[:size] }.reverse.each do |lib|
         report << "#{lib[:library]}   #{Filesize.from(lib[:size].to_s + 'B').pretty}\n"
       end
-      report << "\n# Object detail\n"
-      @id_map.each_value do |id_info|
-        report << "#{id_info[:object]}   #{Filesize.from(id_info[:size].to_s + 'B').pretty}\n"
+
+      sorted_id_map = @id_map.sort_by {|k,v| v[:size] || 0 }.reverse.to_h
+
+      if !@filter_re.nil?
+        report << "\n# Object detail per Group\n"
+        for s in result[:total_grouped]
+          report << "\nGroup " << s[:group] << ": " << "#{Filesize.from(s[:size].to_s + 'B').pretty}\n"
+          puts "\nGroup #{s[:group]}: #{Filesize.from(s[:size].to_s + 'B').pretty} "
+
+          i = 0
+          sorted_id_map.each_value do |id_info|
+            if id_info[:size] && id_info[:group] == s[:group]
+              i = i+1
+              report << "#{id_info[:group]}/#{id_info[:library]} #{id_info[:object]}: size #{id_info[:size]}\n"
+              if i < 7
+                puts "Top #{i} #{id_info[:group]}/#{id_info[:library]} #{id_info[:object]}: size #{id_info[:size]}"
+              end
+            end
+          end
+
+        end
+      end
+
+      report << "\n\n\n# All Object detail\n"
+
+
+      #top individual contributors
+      puts "\n# All Object detail Top"
+      i = 0
+      sorted_id_map.each_value do |id_info|
+        if id_info[:size]
+          i = i+1
+          puts "Top #{i} #{id_info[:group]}/#{id_info[:library]} #{id_info[:object]}: size #{id_info[:size]}"
+          if i > 7
+            break
+          end
+        end
+      end
+
+      #@id_map.sort_by(&:size)
+      #@id_map.each_value do |id_info|
+      sorted_id_map.each_value do |id_info|
+        report << "#{id_info[:group]}/#{id_info[:library]} #{id_info[:object]}   #{Filesize.from(id_info[:size].to_s + 'B').pretty}\n"
       end
 
       report << "# Uncounted Section Detail"
